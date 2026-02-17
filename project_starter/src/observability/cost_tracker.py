@@ -42,12 +42,40 @@ class CostTracker:
         """
         Log a completion response's cost.
         """
-        # TODO: Implement this method
-        # 1. Check if _current_query exists
-        # 2. Extract usage stats from response
-        # 3. Calculate cost (use litellm.completion_cost or fallback)
-        # 4. create StepCost and add to query
-        pass
+        # Check if _current_query exists
+        if not self._current_query:
+            logger.warning("No active query to log completion to")
+            return
+        
+        # Extract usage stats from response
+        usage = getattr(response, 'usage', None)
+        if not usage:
+            logger.warning("Response has no usage data")
+            return
+        
+        input_tokens = getattr(usage, 'prompt_tokens', 0)
+        output_tokens = getattr(usage, 'completion_tokens', 0)
+        model = getattr(response, 'model', 'gpt-4o-mini')
+        
+        # Calculate cost (fallback pricing)
+        # GPT-4o-mini: $0.15/1M input, $0.60/1M output
+        input_cost = (input_tokens / 1_000_000) * 0.15
+        output_cost = (output_tokens / 1_000_000) * 0.60
+        total_cost = input_cost + output_cost
+        
+        # Create StepCost and add to query
+        step_cost = StepCost(
+            step_number=step_number,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=total_cost,
+            is_tool_call=is_tool_call
+        )
+        
+        self._current_query.add_step(step_cost)
+        
+        logger.info(f"Step {step_number}: {input_tokens} in, {output_tokens} out, ${total_cost:.6f}")
 
     def end_query(self):
         if self._current_query:
@@ -55,6 +83,37 @@ class CostTracker:
             self._current_query = None
 
     def print_cost_breakdown(self):
-        # TODO: Print detailed cost breakdown
-        pass
+        """Print detailed cost breakdown"""
+        if not self.queries:
+            print("No queries tracked yet.")
+            return
+        
+        print("\n" + "="*60)
+        print("COST BREAKDOWN")
+        print("="*60)
+        
+        total_cost = 0.0
+        total_input = 0
+        total_output = 0
+        
+        for i, query in enumerate(self.queries, 1):
+            print(f"\nQuery {i}: {query.query[:50]}...")
+            print(f"  Total Cost: ${query.total_cost_usd:.6f}")
+            print(f"  Tokens: {query.total_input_tokens} in, {query.total_output_tokens} out")
+            print(f"  Steps: {len(query.steps)}")
+            
+            for step in query.steps:
+                step_type = "Tool Call" if step.is_tool_call else "Response"
+                print(f"    Step {step.step_number} ({step_type}): ${step.cost_usd:.6f} - {step.input_tokens}/{step.output_tokens} tokens")
+            
+            total_cost += query.total_cost_usd
+            total_input += query.total_input_tokens
+            total_output += query.total_output_tokens
+        
+        print("\n" + "="*60)
+        print(f"TOTAL: ${total_cost:.6f}")
+        print(f"TOKENS: {total_input} input, {total_output} output")
+        print("="*60 + "\n")
 
+# Global cost tracker instance
+cost_tracker = CostTracker()
